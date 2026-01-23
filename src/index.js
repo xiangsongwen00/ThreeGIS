@@ -416,33 +416,61 @@ Mapper.load().then(() => {
     }).then(() => {
         // 地图和地形加载完成后，创建PolygonTerrain示例
         console.log('开始创建PolygonTerrain示例...');
-        
+
         // 计算示例多边形的经纬度范围：以中心坐标为基准，东西偏0.01度，南北偏0.01度
         const centerLon = CONFIG.centerLon;
         const centerLat = CONFIG.centerLat;
         const offset = 0.01; // 偏移量
-        
+
         // 创建多边形坐标数组（经纬度格式）
         const polygon = [
             { lon: centerLon - offset, lat: centerLat + offset }, // 左上角
-            { lon: centerLon + offset, lat: centerLat + offset }, // 右上角
-            { lon: centerLon + offset, lat: centerLat - offset }, // 右下角
+            { lon: centerLon + offset, lat: centerLat + 2 * offset },
+            { lon: centerLon + 2 * offset, lat: centerLat + offset }, // 右上角
+            { lon: centerLon + 2 * offset, lat: centerLat - offset }, // 右下角
             { lon: centerLon - offset, lat: centerLat - offset }  // 左下角
         ];
-        
+
         // 初始化OverlayTerrainMesh实例
         const overlayTerrain = new OverlayTerrainMesh({
             scene: scene,
             polygon: polygon,
             rgbTerrain: rgbTerrain, // 传递RGBTerrain实例，用于获取高程数据
-            offset: 1, // 比地形高100米
+            offset: 700, // 比地形高100米
             segments: 256 // 细分段数，降低分段数提高性能
         });
-        
+
         // 创建覆盖地形网格
         overlayTerrain.createMesh().then(mesh => {
             console.log('OverlayTerrainMesh示例创建成功！');
             console.log('示例范围：', polygon);
+
+            // 绘制红色多边形，高程700
+            const elevation = 700;
+            const mathProj = rgbTerrain.mathProj;
+
+            // 将经纬度坐标转换为Three.js坐标，设置高程为700
+            const threePolygon = polygon.map(point => {
+                const threePos = mathProj.lonLatToThree(point.lon, point.lat);
+                return new THREE.Vector3(threePos.x, elevation, threePos.z);
+            });
+
+            // 创建多边形几何体
+            const polygonGeometry = new THREE.BufferGeometry().setFromPoints(threePolygon);
+
+            // 创建红色材质
+            const polygonMaterial = new THREE.LineBasicMaterial({
+                color: 0xff0000, // 红色
+                linewidth: 2 // 线宽
+            });
+
+            // 创建线环（闭合多边形）
+            const polygonLine = new THREE.LineLoop(polygonGeometry, polygonMaterial);
+
+            // 添加到场景
+            scene.add(polygonLine);
+
+            console.log('红色多边形绘制完成，高程：', elevation);
         }).catch(error => {
             console.error('OverlayTerrainMesh示例创建失败：', error);
         });
