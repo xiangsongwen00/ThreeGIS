@@ -4,7 +4,7 @@
 Three.js 地图地形渲染库，专注于局部3D地理场景，支持卫星地图和地形瓦片加载，提供完整的坐标转换、高程查询、模型加载和动画控制功能。
 
 ## 核心业务逻辑
-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
+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EEEE
 ### 1. 坐标转换系统
 - 高精度坐标转换工具 `MathProj`
 - 支持经纬度 ↔ Web墨卡托 ↔ Three.js坐标
@@ -97,43 +97,6 @@ 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
 - Three.js - 3D渲染引擎
 - JavaScript - 主要开发语言
 - Vite - 开发构建工具
-
-## 项目结构
-```
-├── src/
-│   ├── Terrain/          # 地形相关代码
-│   │   └── rgbTerrain.js  # RGB地形加载器
-│   ├── assest/           # 静态资源
-│   │   ├── data/         # 模型和数据文件
-│   │   │   └── gltf/     # GLTF模型文件
-│   │   ├── img/          # 图片资源
-│   │   │   └── toolLog/  # 工具栏图标
-│   │   └── testImg/      # 测试图片
-│   ├── camera/           # 相机相关代码
-│   │   └── cameraTool.js  # 相机控制工具
-│   ├── infoTool/         # 信息管理工具
-│   │   ├── infoManager.js # 场景信息管理
-│   │   └── testinfo.json  # 测试信息文件
-│   ├── map/              # 地图相关代码
-│   │   └── mapXYZ.js      # XYZ地图加载器
-│   ├── model/            # 模型相关代码
-│   │   ├── ModelManager.js # 模型管理类
-│   │   └── tracker.js     # 资源跟踪管理类
-│   ├── tool/             # 工具类
-│   │   ├── mathProj.js    # 坐标转换工具
-│   │   ├── marker.js      # 标记点管理
-│   │   ├── testMath.js    # 坐标转换测试工具
-│   │   ├── XYtest.js      # 坐标距离验证工具
-│   │   ├── accuracyTest.js # 精度测试工具
-│   │   └── tool.js         # 通用工具函数
-│   ├── toolManager/      # 工具管理系统
-│   │   ├── UI/           # 工具UI组件
-│   │   └── ToolManager.js  # 核心工具管理类
-│   └── index.js          # 入口文件
-├── 开发技术问题记录.md   # 开发技术问题记录
-├── package.json          # 项目配置
-└── README.md             # 项目说明文档
-```
 
 ## 安装与运行
 

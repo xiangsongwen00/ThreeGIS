@@ -5,7 +5,7 @@ import { Terrain } from './terrain/Terrain.js';
 import { AuxiliaryTools } from './utils/AuxiliaryTools.js';
 import { ToolManager } from './toolManager/ToolManager.js';
 import { MarkerManager } from './marker/marker.js';
-
+export {THREE}
 /**
  * 局部地形场景类
  * 实现基于RGB瓦片的地形加载、渲染、编辑和交互功能

@@ -1,8 +1,6 @@
 # 依赖
 node_modules/
 
-# 构建输出
-dist/
 
 # 数据文件夹
 data/

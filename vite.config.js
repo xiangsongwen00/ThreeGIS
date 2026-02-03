@@ -23,15 +23,15 @@ export default defineConfig({
     // 构建配置
     build: {
         lib: {
-            entry: resolve(__dirname, 'src/index.js'),
-            name: 'LocalTerrainScene',
+            entry: resolve(__dirname, 'src/viewer.js'),
+            name: 'ThreeMap',
             fileName: (format) => {
                 if (format === 'es') {
-                    return 'LocalTerrainScene.mjs';
+                    return 'ThreeMap.mjs';
                 } else if (format === 'umd') {
-                    return 'LocalTerrainScene.umd.js';
+                    return 'ThreeMap.umd.js';
                 }
-                return `LocalTerrainScene.${format}.js`;
+                return `ThreeMap.${format}.js`;
             },
             formats: ['es', 'umd'] // 输出ES和UMD格式
         },
