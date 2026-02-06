@@ -1,3 +1,13 @@
+/*
+ * @Author: 2409479323@qq.com
+ * @Date: 2026-02-03 15:13:09
+ * @LastEditors: 2409479323@qq.com 
+ * @LastEditTime: 2026-02-06 18:27:35
+ * @FilePath: \RammedEarth\src\utils\zoomLevel.js
+ * @Description: 
+ * 
+ * Copyright (c) 2026 by bimcc, All Rights Reserved. 
+ */
 /**
  * Shared distance->zoom mapping (from `src/camera/camera.md`).
  * Zoom is an integer where larger means more detail.
@@ -6,8 +16,11 @@
  */
 export function getZoomLevelByDistance(distanceMeters) {
     const d = Math.max(0, Number(distanceMeters) || 0);
-    if (d <= 100) return 18;
-    if (d <= 300) return 18;
+    if (d <= 29) return 22;
+    if (d <= 59) return 21;
+    if (d <= 79) return 20;
+    if (d <= 200) return 19;
+    if (d <= 400) return 18;
     if (d <= 660) return 17;
     if (d <= 1300) return 16;
     if (d <= 2600) return 15;

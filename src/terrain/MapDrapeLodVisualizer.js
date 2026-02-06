@@ -12,6 +12,7 @@ export class MapDrapeLodVisualizer {
         this._linesByZoom = new Map();
         this._viewLine = null;
         this._lastUpdate = 0;
+        this._lastLog = 0;
 
         try {
             this.terrain?.scene?.add?.(this.group);
@@ -55,10 +56,10 @@ export class MapDrapeLodVisualizer {
         if ((now - this._lastUpdate) < intervalMs) return;
         this._lastUpdate = now;
 
-        this._rebuild(camera);
+        this._rebuild(camera, now);
     }
 
-    _rebuild(camera) {
+    _rebuild(camera, now = 0) {
         const terrain = this.terrain;
         const proj = terrain?.proj;
         const atlas = terrain?.mapAtlas;
@@ -72,6 +73,16 @@ export class MapDrapeLodVisualizer {
         const heightOffset = toUnits(heightOffsetMeters);
         const maxTiles = Number.isFinite(cfg.mapDrapeLodVizMaxTiles) ? Math.max(0, cfg.mapDrapeLodVizMaxTiles | 0) : 5000;
         const showViewQuad = cfg.mapDrapeLodVizShowViewQuad !== false;
+        const renderer = terrain?.renderer;
+        const maxRT = (() => {
+            const a = Number(renderer?.capabilities?.maxRenderTargetSize);
+            const b = Number(renderer?.capabilities?.maxTextureSize);
+            let max = Infinity;
+            if (Number.isFinite(a) && a > 0) max = Math.min(max, a);
+            if (Number.isFinite(b) && b > 0) max = Math.min(max, b);
+            if (!Number.isFinite(max) || max <= 0) max = 0;
+            return max | 0;
+        })();
 
         const camMerc = proj?.threeToMercator?.(camera?.position) ?? null;
         const groundHeightAtCam = (camMerc && Number.isFinite(camMerc.x) && Number.isFinite(camMerc.y))
@@ -90,17 +101,24 @@ export class MapDrapeLodVisualizer {
         };
 
         let remaining = maxTiles;
+        const stats = [];
         for (const z of zooms) {
             const st = byZoom.get(z);
             const keys = st?.activeKeys;
             if (!(keys instanceof Set) || keys.size === 0) {
                 const line = this._linesByZoom.get(z);
                 if (line) line.visible = false;
+                stats.push({ z, color: colors[z] ?? 0xffffff, active: 0, drawn: 0, grid: 0, cell: 0, rt: 0, maxGrid: 0, maxRT });
                 continue;
             }
 
             const take = (remaining > 0) ? Math.min(keys.size, remaining) : 0;
             remaining -= take;
+            const grid = st?.grid?.gridSize ?? 0;
+            const cell = st?.cellSize ?? 0;
+            const rt = st?.rt?.width ?? 0;
+            const maxGrid = (maxRT > 0 && cell > 0) ? Math.max(1, Math.floor(maxRT / cell)) : 0;
+            stats.push({ z, color: colors[z] ?? 0xffffff, active: keys.size, drawn: take, grid, cell, rt, maxGrid, maxRT });
 
             const vertexCount = take * 8;
             const positions = new Float32Array(vertexCount * 3);
@@ -194,6 +212,29 @@ export class MapDrapeLodVisualizer {
             this._updateViewQuad(camera, groundY, baseY);
         } else if (this._viewLine) {
             this._viewLine.visible = false;
+        }
+
+        const logMs = Number.isFinite(cfg.mapDrapeLodVizLogMs) ? Math.max(0, Number(cfg.mapDrapeLodVizLogMs)) : 5000;
+        if (logMs > 0 && (now - (this._lastLog || 0)) >= logMs) {
+            this._lastLog = now;
+            const rows = stats
+                .sort((a, b) => b.z - a.z)
+                .map((s) => ({
+                    zoom: s.z,
+                    color: `#${(s.color >>> 0).toString(16).padStart(6, '0')}`,
+                    active: s.active,
+                    drawn: s.drawn,
+                    grid: s.grid,
+                    cell: s.cell,
+                    rt: s.rt,
+                    maxGrid: s.maxGrid,
+                    maxRT: s.maxRT
+                }));
+            try {
+                console.log('[LodViz] tiles by zoom (active vs drawn):', rows);
+            } catch {
+                // ignore
+            }
         }
     }
 

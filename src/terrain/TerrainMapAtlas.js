@@ -1,11 +1,13 @@
 import * as THREE from 'three';
 import { distancePointToRect, nextPow2 } from '../math/math.js';
+import { getZoomLevelByDistance, clampZoom } from '../utils/zoomLevel.js';
 
 export class TerrainMapAtlas {
     constructor(terrain) {
         this.terrain = terrain;
         this._state = { byZoom: new Map(), lastUpdate: 0, pendingCellSizeByZoom: new Map() };
         this._debug = { last: 0 };
+        this._shaderVersion = 8;
         // Internal defaults (keep external config minimal for now).
         this._opts = {
             mapDrapeAtlasFilter: 'linear',
@@ -39,10 +41,11 @@ export class TerrainMapAtlas {
         if (!enabled) return;
 
         material.userData = material.userData || {};
-        if (material.userData.mapAtlasInstalled === true) return;
+        const version = this._shaderVersion | 0;
+        if (material.userData.mapAtlasInstalled === true && material.userData.mapAtlasVersion === version) return;
 
-        const priorOnBeforeCompile = material.onBeforeCompile;
-        const priorKey = material.customProgramCacheKey;
+        const priorOnBeforeCompile = material.userData.mapAtlasPrevOnBeforeCompile ?? material.onBeforeCompile;
+        const priorKey = material.userData.mapAtlasPrevCustomProgramCacheKey ?? material.customProgramCacheKey;
         material.userData.mapAtlasPrevOnBeforeCompile = priorOnBeforeCompile;
         material.userData.mapAtlasPrevCustomProgramCacheKey = priorKey;
 
@@ -63,22 +66,26 @@ export class TerrainMapAtlas {
                 )
             };
 
-            shader.uniforms.uMapAtlasTex15 = { value: null };
-            shader.uniforms.uMapAtlasTex16 = { value: null };
-            shader.uniforms.uMapAtlasTex17 = { value: null };
-            shader.uniforms.uMapAtlasTex18 = { value: null };
-            shader.uniforms.uMapAtlasGrid15 = { value: new THREE.Vector4(0, 0, 0, 0) };
-            shader.uniforms.uMapAtlasGrid16 = { value: new THREE.Vector4(0, 0, 0, 0) };
-            shader.uniforms.uMapAtlasGrid17 = { value: new THREE.Vector4(0, 0, 0, 0) };
-            shader.uniforms.uMapAtlasGrid18 = { value: new THREE.Vector4(0, 0, 0, 0) };
-            shader.uniforms.uMapAtlasOriginLocal15 = { value: new THREE.Vector2(0, 0) };
-            shader.uniforms.uMapAtlasOriginLocal16 = { value: new THREE.Vector2(0, 0) };
-            shader.uniforms.uMapAtlasOriginLocal17 = { value: new THREE.Vector2(0, 0) };
-            shader.uniforms.uMapAtlasOriginLocal18 = { value: new THREE.Vector2(0, 0) };
-            shader.uniforms.uMapAtlasInvCell15 = { value: 0 };
-            shader.uniforms.uMapAtlasInvCell16 = { value: 0 };
-            shader.uniforms.uMapAtlasInvCell17 = { value: 0 };
-            shader.uniforms.uMapAtlasInvCell18 = { value: 0 };
+            shader.uniforms.uMapAtlasTex0 = { value: null };
+            shader.uniforms.uMapAtlasTex1 = { value: null };
+            shader.uniforms.uMapAtlasTex2 = { value: null };
+            shader.uniforms.uMapAtlasTex3 = { value: null };
+            shader.uniforms.uMapAtlasGrid0 = { value: new THREE.Vector4(0, 0, 0, 0) };
+            shader.uniforms.uMapAtlasGrid1 = { value: new THREE.Vector4(0, 0, 0, 0) };
+            shader.uniforms.uMapAtlasGrid2 = { value: new THREE.Vector4(0, 0, 0, 0) };
+            shader.uniforms.uMapAtlasGrid3 = { value: new THREE.Vector4(0, 0, 0, 0) };
+            shader.uniforms.uMapAtlasOriginLocal0 = { value: new THREE.Vector2(0, 0) };
+            shader.uniforms.uMapAtlasOriginLocal1 = { value: new THREE.Vector2(0, 0) };
+            shader.uniforms.uMapAtlasOriginLocal2 = { value: new THREE.Vector2(0, 0) };
+            shader.uniforms.uMapAtlasOriginLocal3 = { value: new THREE.Vector2(0, 0) };
+            shader.uniforms.uMapAtlasInvCell0 = { value: 0 };
+            shader.uniforms.uMapAtlasInvCell1 = { value: 0 };
+            shader.uniforms.uMapAtlasInvCell2 = { value: 0 };
+            shader.uniforms.uMapAtlasInvCell3 = { value: 0 };
+            shader.uniforms.uMapAtlasZoom0 = { value: 0 };
+            shader.uniforms.uMapAtlasZoom1 = { value: 0 };
+            shader.uniforms.uMapAtlasZoom2 = { value: 0 };
+            shader.uniforms.uMapAtlasZoom3 = { value: 0 };
             shader.uniforms.uMapAtlasSmoothness = { value: 0 };
             shader.uniforms.uMapAtlasSmoothRadiusPx = { value: 1 };
             shader.uniforms.uSceneMetersPerUnit = { value: 1 };
@@ -93,22 +100,26 @@ export class TerrainMapAtlas {
             const header = `
 uniform float uMapAtlasEnabled;
 uniform vec2 uMapAtlasCenterMercator;
-uniform sampler2D uMapAtlasTex15;
-uniform sampler2D uMapAtlasTex16;
-uniform sampler2D uMapAtlasTex17;
-uniform sampler2D uMapAtlasTex18;
-uniform vec4 uMapAtlasGrid15;
-uniform vec4 uMapAtlasGrid16;
-uniform vec4 uMapAtlasGrid17;
-uniform vec4 uMapAtlasGrid18;
-uniform vec2 uMapAtlasOriginLocal15;
-uniform vec2 uMapAtlasOriginLocal16;
-uniform vec2 uMapAtlasOriginLocal17;
-uniform vec2 uMapAtlasOriginLocal18;
- uniform float uMapAtlasInvCell15;
- uniform float uMapAtlasInvCell16;
- uniform float uMapAtlasInvCell17;
- uniform float uMapAtlasInvCell18;
+uniform sampler2D uMapAtlasTex0;
+uniform sampler2D uMapAtlasTex1;
+uniform sampler2D uMapAtlasTex2;
+uniform sampler2D uMapAtlasTex3;
+uniform vec4 uMapAtlasGrid0;
+uniform vec4 uMapAtlasGrid1;
+uniform vec4 uMapAtlasGrid2;
+uniform vec4 uMapAtlasGrid3;
+uniform vec2 uMapAtlasOriginLocal0;
+uniform vec2 uMapAtlasOriginLocal1;
+uniform vec2 uMapAtlasOriginLocal2;
+uniform vec2 uMapAtlasOriginLocal3;
+ uniform float uMapAtlasInvCell0;
+ uniform float uMapAtlasInvCell1;
+ uniform float uMapAtlasInvCell2;
+ uniform float uMapAtlasInvCell3;
+ uniform float uMapAtlasZoom0;
+ uniform float uMapAtlasZoom1;
+ uniform float uMapAtlasZoom2;
+ uniform float uMapAtlasZoom3;
  uniform float uMapAtlasSmoothness;
  uniform float uMapAtlasSmoothRadiusPx;
  uniform float uSceneMetersPerUnit;
@@ -118,7 +129,7 @@ const float MAP_ATLAS_PI = 3.1415926535897932384626433832795;
 const float MAP_ATLAS_R = 6378137.0;
 const float MAP_ATLAS_WORLD = 2.0 * MAP_ATLAS_PI * MAP_ATLAS_R;
 
-vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in float invCell, in float z, in vec3 wpos) {
+vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in float invCell, in float z, in vec3 wpos, in float smoothness) {
     // 0..1 alpha in the atlas render target is used as a "tile-present" mask.
     // Mipmapping/linear filtering can introduce fractional alpha near tile borders; treat small values as "missing"
     // to avoid discard/halo artifacts at LOD boundaries.
@@ -146,7 +157,7 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
     // Avoid sampling across tile borders (reduces visible grid/seams at oblique angles).
     // If smoothing is enabled we also keep an extra border so blur taps won't cross into neighbors.
     float rpx = max(0.0, uMapAtlasSmoothRadiusPx);
-    float eps = (0.5 + (uMapAtlasSmoothness > 0.0 ? rpx : 0.0)) * invCell;
+    float eps = (0.5 + (smoothness > 0.0 ? rpx : 0.0)) * invCell;
     fu = clamp(fu, eps, 1.0 - eps);
     fv = clamp(fv, eps, 1.0 - eps);
 
@@ -163,7 +174,7 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
     if (c0.a < 0.999) c0.rgb /= max(c0.a, 1e-6);
     c0.a = 1.0;
 
-    if (uMapAtlasSmoothness <= 0.0) return c0;
+    if (smoothness <= 0.0) return c0;
 
     // Light edge-aware blur in *tile pixel* space to hide macroblock/pixelation when magnifying 256px tiles.
     // Step in atlas UV for 1 tile pixel:
@@ -196,7 +207,7 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
     vec3 d8 = c8.rgb - c0.rgb; float w8 = 1.0 * exp(-dot(d8, d8) * k); sum += c8 * w8; wsum += w8;
 
     vec4 blur = sum / max(wsum, 1e-6);
-    vec4 c = mix(c0, blur, clamp(uMapAtlasSmoothness, 0.0, 1.0));
+    vec4 c = mix(c0, blur, clamp(smoothness, 0.0, 1.0));
     if (c.a <= ALPHA_CUTOFF) return vec4(0.0);
     if (c.a < 0.999) c.rgb /= max(c.a, 1e-6);
     c.a = 1.0;
@@ -217,10 +228,24 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
                 `#include <map_fragment>
  #ifdef USE_MAP
      if (uMapAtlasEnabled > 0.5) {
-        vec4 atlasColor = sampleMapAtlas(uMapAtlasTex18, uMapAtlasGrid18, uMapAtlasOriginLocal18, uMapAtlasInvCell18, 18.0, ${varyName});
-        if (atlasColor.a <= 0.0) atlasColor = sampleMapAtlas(uMapAtlasTex17, uMapAtlasGrid17, uMapAtlasOriginLocal17, uMapAtlasInvCell17, 17.0, ${varyName});
-        if (atlasColor.a <= 0.0) atlasColor = sampleMapAtlas(uMapAtlasTex16, uMapAtlasGrid16, uMapAtlasOriginLocal16, uMapAtlasInvCell16, 16.0, ${varyName});
-        if (atlasColor.a <= 0.0) atlasColor = sampleMapAtlas(uMapAtlasTex15, uMapAtlasGrid15, uMapAtlasOriginLocal15, uMapAtlasInvCell15, 15.0, ${varyName});
+        vec4 c0 = sampleMapAtlas(uMapAtlasTex0, uMapAtlasGrid0, uMapAtlasOriginLocal0, uMapAtlasInvCell0, uMapAtlasZoom0, ${varyName}, 0.0);
+        vec4 c1 = sampleMapAtlas(uMapAtlasTex1, uMapAtlasGrid1, uMapAtlasOriginLocal1, uMapAtlasInvCell1, uMapAtlasZoom1, ${varyName}, 0.0);
+        vec4 c2 = sampleMapAtlas(uMapAtlasTex2, uMapAtlasGrid2, uMapAtlasOriginLocal2, uMapAtlasInvCell2, uMapAtlasZoom2, ${varyName}, 0.0);
+        vec4 c3 = sampleMapAtlas(uMapAtlasTex3, uMapAtlasGrid3, uMapAtlasOriginLocal3, uMapAtlasInvCell3, uMapAtlasZoom3, ${varyName}, 0.0);
+
+        float bestZ = -1.0;
+        float bestSlot = -1.0;
+        if (c0.a > 0.0 && uMapAtlasZoom0 > bestZ) { bestZ = uMapAtlasZoom0; bestSlot = 0.0; }
+        if (c1.a > 0.0 && uMapAtlasZoom1 > bestZ) { bestZ = uMapAtlasZoom1; bestSlot = 1.0; }
+        if (c2.a > 0.0 && uMapAtlasZoom2 > bestZ) { bestZ = uMapAtlasZoom2; bestSlot = 2.0; }
+        if (c3.a > 0.0 && uMapAtlasZoom3 > bestZ) { bestZ = uMapAtlasZoom3; bestSlot = 3.0; }
+
+        vec4 atlasColor = vec4(0.0);
+        if (bestSlot == 0.0) atlasColor = sampleMapAtlas(uMapAtlasTex0, uMapAtlasGrid0, uMapAtlasOriginLocal0, uMapAtlasInvCell0, uMapAtlasZoom0, ${varyName}, uMapAtlasSmoothness);
+        else if (bestSlot == 1.0) atlasColor = sampleMapAtlas(uMapAtlasTex1, uMapAtlasGrid1, uMapAtlasOriginLocal1, uMapAtlasInvCell1, uMapAtlasZoom1, ${varyName}, uMapAtlasSmoothness);
+        else if (bestSlot == 2.0) atlasColor = sampleMapAtlas(uMapAtlasTex2, uMapAtlasGrid2, uMapAtlasOriginLocal2, uMapAtlasInvCell2, uMapAtlasZoom2, ${varyName}, uMapAtlasSmoothness);
+        else if (bestSlot == 3.0) atlasColor = sampleMapAtlas(uMapAtlasTex3, uMapAtlasGrid3, uMapAtlasOriginLocal3, uMapAtlasInvCell3, uMapAtlasZoom3, ${varyName}, uMapAtlasSmoothness);
+
         if (atlasColor.a > 0.0) {
             diffuseColor.rgb = atlasColor.rgb;
         }
@@ -231,8 +256,11 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
 
         material.customProgramCacheKey = function () {
             const base = typeof priorKey === 'function' ? String(priorKey.call(this)) : '';
-            return `${base}|mapAtlas-v7`;
+            return `${base}|mapAtlas-v${version}`;
         };
+        material.userData.mapAtlasInstalled = true;
+        material.userData.mapAtlasVersion = version;
+        material.needsUpdate = true;
 
         material.userData.mapAtlasInstalled = true;
         material.needsUpdate = true;
@@ -275,8 +303,24 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
         this._setUniforms(false);
     }
 
+    _getAtlasZoomSlots(maxSlots = 4) {
+        const byZoom = this._state?.byZoom;
+        if (!byZoom || byZoom.size === 0) return [];
+        return Array.from(byZoom.keys())
+            .filter((z) => Number.isFinite(z))
+            .sort((a, b) => b - a)
+            .slice(0, Math.max(1, maxSlots | 0));
+    }
+
     update(camera) {
         const cfg = this.terrain?.config || {};
+        if (cfg && typeof cfg === 'object') {
+            if (typeof cfg.mapDrapeAtlasFilter === 'string') this._opts.mapDrapeAtlasFilter = cfg.mapDrapeAtlasFilter;
+            if (cfg.mapDrapeAtlasMipmaps !== undefined) this._opts.mapDrapeAtlasMipmaps = cfg.mapDrapeAtlasMipmaps === true;
+            if (Number.isFinite(cfg.mapDrapeAtlasAnisotropy)) this._opts.mapDrapeAtlasAnisotropy = Math.max(1, cfg.mapDrapeAtlasAnisotropy | 0);
+            if (Number.isFinite(cfg.mapDrapeAtlasSmoothness)) this._opts.mapDrapeAtlasSmoothness = Number(cfg.mapDrapeAtlasSmoothness);
+            if (Number.isFinite(cfg.mapDrapeAtlasSmoothRadiusPx)) this._opts.mapDrapeAtlasSmoothRadiusPx = Number(cfg.mapDrapeAtlasSmoothRadiusPx);
+        }
         const proj = this.terrain?.proj;
         const toUnits = (v) => (proj?.metersToUnits ? proj.metersToUnits(v) : Number(v));
         const toMeters = (v) => (proj?.unitsToMeters ? proj.unitsToMeters(v) : Number(v));
@@ -293,13 +337,33 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
             // ignore
         }
 
+        const lodCfg = (cfg.mapDrapeLod && typeof cfg.mapDrapeLod === 'object') ? cfg.mapDrapeLod : null;
         const enableBelowOrEqualHeight = Number.isFinite(cfg.mapDrapeEnableBelowOrEqualHeightMeters)
             ? cfg.mapDrapeEnableBelowOrEqualHeightMeters
             : null;
         const radiusMeters = Number.isFinite(cfg.mapDrapeNearMeters) ? cfg.mapDrapeNearMeters : 1100;
-        const updateMs = Number.isFinite(cfg.mapDrapePatchUpdateMs) ? cfg.mapDrapePatchUpdateMs : 250;
+        const updateMs = Number.isFinite(lodCfg?.updateMs) ? Number(lodCfg.updateMs)
+            : (Number.isFinite(cfg.mapDrapePatchUpdateMs) ? cfg.mapDrapePatchUpdateMs : 250);
 
         const atlas = this._state;
+        const getCellSizeOverride = (z) => {
+            const byZoom = cfg.mapDrapeAtlasCellSizeByZoom;
+            if (byZoom && typeof byZoom === 'object') {
+                const v = byZoom[z];
+                if (Number.isFinite(v)) return v;
+            }
+            const v2 = cfg.mapDrapeAtlasCellSize;
+            if (Number.isFinite(v2)) return v2;
+            return null;
+        };
+        const resolveCellSize = (z, fallback) => {
+            const ov = getCellSizeOverride(z);
+            if (ov !== null) return Math.max(32, Math.min(2048, ov | 0));
+            const base = Number.isFinite(fallback) ? fallback : (this.terrain?.tileConfig?.tileSize ?? 256);
+            return Math.max(32, Math.min(2048, base | 0));
+        };
+        const hasCellSizeOverride = (z) => getCellSizeOverride(z) !== null;
+        const skipTileLoad = cfg.mapDrapeSkipTileLoad === true;
 
         const camMerc = proj?.threeToMercator?.(camera.position) ?? null;
         const groundHeightAtCam = (camMerc && Number.isFinite(camMerc.x) && Number.isFinite(camMerc.y))
@@ -323,21 +387,67 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
         }
 
         const now = this._now();
+        const debounceMs = Number.isFinite(lodCfg?.debounce?.ms) ? Math.max(0, Number(lodCfg.debounce.ms))
+            : (Number.isFinite(cfg.mapDrapeDebounceMs) ? Math.max(0, Number(cfg.mapDrapeDebounceMs)) : 150);
+        if (debounceMs > 0) {
+            const moveMeters = Number.isFinite(lodCfg?.debounce?.moveMeters) ? Math.max(0, Number(lodCfg.debounce.moveMeters))
+                : (Number.isFinite(cfg.mapDrapeDebounceMoveMeters) ? Math.max(0, Number(cfg.mapDrapeDebounceMoveMeters)) : 15);
+            const heightMeters = Number.isFinite(lodCfg?.debounce?.heightMeters) ? Math.max(0, Number(lodCfg.debounce.heightMeters))
+                : (Number.isFinite(cfg.mapDrapeDebounceHeightMeters) ? Math.max(0, Number(cfg.mapDrapeDebounceHeightMeters)) : 20);
+            const angleDeg = Number.isFinite(lodCfg?.debounce?.angleDeg) ? Math.max(0, Number(lodCfg.debounce.angleDeg))
+                : (Number.isFinite(cfg.mapDrapeDebounceAngleDeg) ? Math.max(0, Number(cfg.mapDrapeDebounceAngleDeg)) : 1.5);
+
+            const lastView = atlas.lastView || null;
+            const curView = {
+                x: Number(camera.position.x),
+                y: Number(camera.position.y),
+                z: Number(camera.position.z),
+                qx: Number(camera.quaternion.x),
+                qy: Number(camera.quaternion.y),
+                qz: Number(camera.quaternion.z),
+                qw: Number(camera.quaternion.w)
+            };
+            atlas.lastView = curView;
+
+            if (lastView) {
+                const dx = toMeters(curView.x - lastView.x);
+                const dz = toMeters(curView.z - lastView.z);
+                const dy = toMeters(curView.y - lastView.y);
+                const planar = Math.hypot(dx, dz);
+                const h = Math.abs(dy);
+                const dot = (curView.qx * lastView.qx) + (curView.qy * lastView.qy) + (curView.qz * lastView.qz) + (curView.qw * lastView.qw);
+                const clampedDot = Math.max(-1, Math.min(1, Math.abs(dot)));
+                const ang = 2 * Math.acos(clampedDot) * (180 / Math.PI);
+                if (planar > moveMeters || h > heightMeters || ang > angleDeg) {
+                    atlas.lastMoveAt = now;
+                }
+            }
+
+            if (Number.isFinite(atlas.lastMoveAt) && (now - atlas.lastMoveAt) < debounceMs) return;
+        }
+
         if ((now - (atlas.lastUpdate || 0)) < updateMs) return;
         atlas.lastUpdate = now;
 
         if (!camMerc || !Number.isFinite(camMerc.x) || !Number.isFinite(camMerc.y)) return;
 
-        // New default: view-trapezoid, angle-aware LOD (quadtree refine by screen-space error).
-        // Old band-based radial logic is still available by setting `mapDrapeLodMode: "bands"`.
-        const lodMode = String(cfg.mapDrapeLodMode ?? 'trapezoid');
-        if (lodMode !== 'bands') {
+        // LOD mode:
+        // - 'trapezoid': view-trapezoid refine (screen-space error)
+        // - 'viewport': load viewport tiles only (clean, minimal)
+        // - 'bands': radial bands
+        const lodMode = String(lodCfg?.mode ?? cfg.mapDrapeLodMode ?? 'trapezoid');
+        if (lodMode === 'trapezoid') {
             const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
             const WORLD = 2 * Math.PI * 6378137;
             const MAX_ATLAS_ZOOM = 18;
             const maxMapZoomCfg = Number.isFinite(this.terrain?.tileConfig?.maxMapZoom) ? (this.terrain.tileConfig.maxMapZoom | 0) : MAX_ATLAS_ZOOM;
-            const atlasMaxZoom = Math.max(15, Math.min(MAX_ATLAS_ZOOM, maxMapZoomCfg));
+            const maxZoomCfg = Number.isFinite(lodCfg?.maxZoom) ? (lodCfg.maxZoom | 0) : maxMapZoomCfg;
+            const minZoomCfg = Number.isFinite(lodCfg?.minZoom)
+                ? (lodCfg.minZoom | 0)
+                : (Number.isFinite(cfg.mapDrapeAtlasMinZoom) ? (cfg.mapDrapeAtlasMinZoom | 0) : 5);
+            const atlasMinZoom = Math.max(2, Math.min(MAX_ATLAS_ZOOM, minZoomCfg));
+            const atlasMaxZoom = Math.max(atlasMinZoom, Math.min(MAX_ATLAS_ZOOM, maxZoomCfg));
 
             // Camera pitch (0 = horizontal, -90 = straight down).
             const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
@@ -347,7 +457,7 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
             const tiltFromVerticalDeg = clamp(90 - downTiltDeg, 0, 90);
 
             const bands = Array.isArray(cfg.mapDrapePatchBands) ? cfg.mapDrapePatchBands : null;
-            let topZoomCfg = 15;
+            let topZoomCfg = atlasMinZoom;
             if (bands) {
                 for (const b of bands) {
                     const z = Number(b?.zoom);
@@ -356,7 +466,7 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
             } else {
                 topZoomCfg = atlasMaxZoom;
             }
-            topZoomCfg = clamp(topZoomCfg | 0, 15, atlasMaxZoom);
+            topZoomCfg = clamp(topZoomCfg | 0, atlasMinZoom, atlasMaxZoom);
 
             // Viewport resolution (for screen-space LOD).
             const renderer = this.terrain?.renderer;
@@ -414,8 +524,9 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
             const centerDist = (Number.isFinite(centerDistUnits) ? toMeters(centerDistUnits) : null);
 
             // Auto cap on top zoom: use the camera->terrain intersection distance (not just height).
+            const autoMaxZoomEnabled = (lodCfg?.autoMaxZoom !== undefined) ? lodCfg.autoMaxZoom : cfg.mapDrapeAutoMaxZoomEnabled;
             const topZoomByView = (() => {
-                if (cfg.mapDrapeAutoMaxZoomEnabled === false) return null;
+                if (autoMaxZoomEnabled === false) return null;
                 if (!Number.isFinite(viewportH) || viewportH <= 0) return null;
 
                 let metersPerPixel = null;
@@ -442,7 +553,7 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
 
                 const z = Math.ceil(Math.log2(WORLD / (256 * metersPerPixel)));
                 if (!Number.isFinite(z)) return null;
-                return clamp(z | 0, 15, atlasMaxZoom);
+                return clamp(z | 0, atlasMinZoom, atlasMaxZoom);
             })();
 
             let topZoom = topZoomCfg;
@@ -452,8 +563,10 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
             // Keep the floor at `mapDrapeBaseZoom` so far tiles don't explode in count when the view is vertical.
             const baseZoomCfg = Number.isFinite(cfg.mapDrapeBaseZoom)
                 ? (cfg.mapDrapeBaseZoom | 0)
-                : (Number.isFinite(this.terrain?.tileConfig?.mapDrapeBaseZoom) ? (this.terrain.tileConfig.mapDrapeBaseZoom | 0) : 15);
-            const minZoom = clamp(baseZoomCfg, 15, topZoom);
+                : (Number.isFinite(this.terrain?.tileConfig?.mapDrapeBaseZoom) ? (this.terrain.tileConfig.mapDrapeBaseZoom | 0) : atlasMinZoom);
+            let minZoom = clamp(baseZoomCfg, atlasMinZoom, topZoom);
+            const minZoomSlots = Math.max(atlasMinZoom, topZoom - 3);
+            if (minZoom < minZoomSlots) minZoom = minZoomSlots;
             const lodLevels = Math.max(1, (topZoom - minZoom + 1));
 
             const maxNewLoadsPerTick = Math.max(0, this._opts.mapDrapeAtlasMaxNewLoadsPerTick | 0);
@@ -464,11 +577,13 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
             const projScreen = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
             frustum.setFromProjectionMatrix(projScreen);
 
-            const viewportPadTiles = Number.isFinite(cfg.mapDrapeViewportPadTiles)
-                ? Math.max(0, cfg.mapDrapeViewportPadTiles | 0)
-                : (Number.isFinite(this.terrain?.tileConfig?.mapDrapeViewportPadTiles)
-                    ? Math.max(0, this.terrain.tileConfig.mapDrapeViewportPadTiles | 0)
-                    : 1);
+            const viewportPadTiles = Number.isFinite(lodCfg?.viewportPadTiles)
+                ? Math.max(0, lodCfg.viewportPadTiles | 0)
+                : (Number.isFinite(cfg.mapDrapeViewportPadTiles)
+                    ? Math.max(0, cfg.mapDrapeViewportPadTiles | 0)
+                    : (Number.isFinite(this.terrain?.tileConfig?.mapDrapeViewportPadTiles)
+                        ? Math.max(0, this.terrain.tileConfig.mapDrapeViewportPadTiles | 0)
+                        : 1));
 
             // Shallow views can project a *huge* ground footprint (near-horizontal rays). Cap the patch range
             // to avoid exploding tile counts / crashing. User requested: tiltFromVerticalDeg >= 60 => 5km cap.
@@ -706,18 +821,24 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
                 }
             }
 
-            // Prioritize highest zoom first so higher-zoom tiles are requested before lower ones.
+            const zoomLevels = [];
+            for (let z = topZoom; z >= minZoom; z--) zoomLevels.push(z);
+            const zoomLevelSet = new Set(zoomLevels);
+
+            // Clear any stale zoom levels that are no longer active.
             const tiles = this._tiles();
-            for (const z of [18, 17, 16, 15]) {
-                if (z < minZoom || z > topZoom) {
-                    const stOld = atlas.byZoom.get(z);
-                    if (stOld) {
-                        if (tiles) for (const key of stOld.activeKeys) tiles.unpin?.(key);
-                        atlas.byZoom.delete(z);
-                        try { stOld.rt?.dispose?.(); } catch {}
-                    }
-                    continue;
+            for (const z of Array.from(atlas.byZoom.keys())) {
+                if (zoomLevelSet.has(z)) continue;
+                const stOld = atlas.byZoom.get(z);
+                if (stOld) {
+                    if (tiles) for (const key of stOld.activeKeys) tiles.unpin?.(key);
+                    atlas.byZoom.delete(z);
+                    try { stOld.rt?.dispose?.(); } catch {}
                 }
+            }
+
+            // Prioritize highest zoom first so higher-zoom tiles are requested before lower ones.
+            for (const z of zoomLevels) {
 
                 const candidates = tilesByZoom.get(z) || [];
                 if (candidates.length === 0) {
@@ -761,7 +882,7 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
                 if (originY > minTY) originY = clampOrigin(minTY);
                 if ((originY + gridSize - 1) < maxTY) originY = clampOrigin(maxTY - gridSize + 1);
 
-                const desiredCellSize = atlas.pendingCellSizeByZoom.get(z) || atlas.byZoom.get(z)?.cellSize || (this.terrain?.tileConfig?.tileSize ?? 256);
+                const desiredCellSize = resolveCellSize(z, atlas.pendingCellSizeByZoom.get(z) || atlas.byZoom.get(z)?.cellSize || (this.terrain?.tileConfig?.tileSize ?? 256));
                 const st = this._ensureZoomState(z, { originX, originY, gridSize }, desiredCellSize);
                 if (atlas.pendingCellSizeByZoom.has(z) && st?.cellSize === desiredCellSize) atlas.pendingCellSizeByZoom.delete(z);
 
@@ -774,6 +895,10 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
                     if (tiles && !st.activeKeys.has(key)) tiles.pin?.(key);
                 }
                 st.activeKeys = desiredKeys;
+
+                if (skipTileLoad) {
+                    continue;
+                }
 
                 for (const key of st.textures.keys()) {
                     if (desiredKeys.has(key)) continue;
@@ -829,11 +954,11 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
                     const p = tiles
                         ?.getTileTexture(c.tileX, c.tileY, z)
                         .then((tex) => {
-                            const actual = this._getCellSizeFromTexture(tex);
-                            if (actual && atlas.pendingCellSizeByZoom.get(z) !== actual) {
-                                const currentCell = atlas.byZoom.get(z)?.cellSize || (this.terrain?.tileConfig?.tileSize ?? 256);
-                                if (actual !== currentCell) atlas.pendingCellSizeByZoom.set(z, actual);
-                            }
+                        const actual = this._getCellSizeFromTexture(tex);
+                        if (!hasCellSizeOverride(z) && actual && atlas.pendingCellSizeByZoom.get(z) !== actual) {
+                            const currentCell = atlas.byZoom.get(z)?.cellSize || (this.terrain?.tileConfig?.tileSize ?? 256);
+                            if (actual !== currentCell) atlas.pendingCellSizeByZoom.set(z, actual);
+                        }
 
                             const stNow = atlas.byZoom.get(z);
                             if (!stNow?.activeKeys?.has?.(c.key)) return;
@@ -865,11 +990,11 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
                 }
             }
 
-            this._setUniforms(true);
+            this._setUniforms(!skipTileLoad);
 
             const loadedAtCam = {};
             const active = {};
-            for (let z = atlasMaxZoom; z >= 15; z--) {
+            for (const z of zoomLevels) {
                 const st = atlas.byZoom.get(z);
                 if (!st) {
                     loadedAtCam[z] = false;
@@ -924,47 +1049,215 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
             return;
         }
 
-        const bands = Array.isArray(cfg.mapDrapePatchBands) ? cfg.mapDrapePatchBands : [
-            { maxDist: 80, zoom: 18 },
-            { maxDist: 250, zoom: 17 },
-            { maxDist: 600, zoom: 16 },
-            { maxDist: radiusMeters, zoom: 15 }
-        ];
-
         // Camera pitch (0 = horizontal, -90 = straight down).
         const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
         const fwdHoriz = Math.sqrt(fwd.x * fwd.x + fwd.z * fwd.z);
         const downTiltDeg = THREE.MathUtils.radToDeg(Math.atan2(-fwd.y, fwdHoriz));
         const pitchDeg = -downTiltDeg;
 
+        const useViewportMode = lodMode === 'viewport';
+
         // When looking down enough, prefer "viewport coverage" over radial distance coverage to avoid
         // visible cut-offs inside the frustum (e.g. clear near area + blurry far area still in view).
         const viewportFullMinDownTiltDeg = Number.isFinite(cfg.mapDrapeViewportFullUpdateMinDownTiltDeg)
             ? Number(cfg.mapDrapeViewportFullUpdateMinDownTiltDeg)
             : 40;
-        const viewportFullUpdateRequested = downTiltDeg >= viewportFullMinDownTiltDeg;
+        const viewportFullUpdateRequested = useViewportMode ? true : (downTiltDeg >= viewportFullMinDownTiltDeg);
+
+        const planeBelowGroundCfg = Number.isFinite(cfg.mapDrapeViewportPlaneBelowGroundMeters)
+            ? Math.max(0, Number(cfg.mapDrapeViewportPlaneBelowGroundMeters))
+            : null;
+        const planeBelowGroundMeters = planeBelowGroundCfg !== null
+            ? planeBelowGroundCfg
+            : (Number.isFinite(cameraHeight) && cameraHeight > 0 ? Math.min(500, Math.max(0, cameraHeight * 0.25)) : 0);
+        const planeBelowGround = toUnits(planeBelowGroundMeters);
+        const planeY = (Number.isFinite(groundHeightAtCam) ? Number(groundHeightAtCam) : 0) - planeBelowGround;
 
         const WORLD = 2 * Math.PI * 6378137;
         const MAX_ATLAS_ZOOM = 18;
         const maxMapZoomCfg = Number.isFinite(this.terrain?.tileConfig?.maxMapZoom) ? (this.terrain.tileConfig.maxMapZoom | 0) : MAX_ATLAS_ZOOM;
-        const atlasMaxZoom = Math.max(15, Math.min(MAX_ATLAS_ZOOM, maxMapZoomCfg));
+        const maxZoomCfg = Number.isFinite(lodCfg?.maxZoom) ? (lodCfg.maxZoom | 0) : maxMapZoomCfg;
+        const minZoomCfg = Number.isFinite(lodCfg?.minZoom) ? (lodCfg.minZoom | 0) : Number(cfg.mapDrapeAtlasMinZoom);
+        const atlasMinZoom = Number.isFinite(minZoomCfg)
+            ? Math.max(2, Math.min(MAX_ATLAS_ZOOM, minZoomCfg | 0))
+            : 5;
+        const atlasMaxZoom = Math.max(atlasMinZoom, Math.min(MAX_ATLAS_ZOOM, maxZoomCfg));
+        const bandsCfg = Array.isArray(cfg.mapDrapePatchBands) ? cfg.mapDrapePatchBands : null;
+        const autoMaxZoomEnabled = (lodCfg?.autoMaxZoom !== undefined) ? lodCfg.autoMaxZoom : cfg.mapDrapeAutoMaxZoomEnabled;
+        const maxViewportLevels = Number.isFinite(lodCfg?.maxLevels) ? Math.max(1, lodCfg.maxLevels | 0) : 4;
+        const useAutoBands = !useViewportMode && (cfg.mapDrapePatchBands === 'auto' || cfg.mapDrapePatchBandsAuto === true || !bandsCfg);
+
+        const terrainGroup = this.terrain?.terrainGroup;
+        try { terrainGroup?.updateMatrixWorld?.(true); } catch {}
+        const raycaster = this._mapDrapeAtlasRaycaster || (this._mapDrapeAtlasRaycaster = new THREE.Raycaster());
+        const ndcV2 = this._mapDrapeAtlasNdc || (this._mapDrapeAtlasNdc = new THREE.Vector2());
+
+        const cameraHeightForLod = (() => {
+            if (!camera) return cameraHeight;
+            ndcV2.set(0, 0);
+            raycaster.setFromCamera(ndcV2, camera);
+
+            if (terrainGroup) {
+                const hits = raycaster.intersectObject(terrainGroup, true);
+                if (hits?.length) {
+                    for (const h of hits) {
+                        const obj = h?.object;
+                        if (obj?.userData?.isEditPatch) continue;
+                        if (h?.point?.isVector3) {
+                            const dy = camera.position.y - h.point.y;
+                            const hMeters = toMeters(dy);
+                            if (Number.isFinite(hMeters)) return hMeters;
+                        }
+                    }
+                }
+            }
+
+            const o = raycaster.ray.origin;
+            const d = raycaster.ray.direction;
+            const dy = d.y;
+            if (Number.isFinite(dy) && Math.abs(dy) >= 1e-9) {
+                const t = (planeY - o.y) / dy;
+                if (Number.isFinite(t) && t > 0) {
+                    const hitY = o.y + (dy * t);
+                    const hMeters = toMeters(camera.position.y - hitY);
+                    if (Number.isFinite(hMeters)) return hMeters;
+                }
+            }
+            return cameraHeight;
+        })();
+        const bands = (() => {
+            if (useViewportMode) {
+                const pickViewportZoom = () => {
+                    const zoomBias = Number.isFinite(lodCfg?.zoomBias) ? Number(lodCfg.zoomBias) : 0;
+                    if (autoMaxZoomEnabled === false) return atlasMaxZoom;
+                    const renderer = this.terrain?.renderer;
+                    const cssH = Number(renderer?.domElement?.clientHeight) || 0;
+                    let dpr = 1;
+                    try {
+                        dpr = Number(renderer?.getPixelRatio?.() ?? 1) || 1;
+                    } catch {
+                        // ignore
+                    }
+                    const viewportH = (cssH > 0 ? cssH * dpr : 720);
+                    if (!Number.isFinite(viewportH) || viewportH <= 0) return atlasMaxZoom;
+
+                    let metersPerPixel = null;
+                    if (camera?.isOrthographicCamera === true) {
+                        const frustumHUnits = Math.abs(Number(camera.top) - Number(camera.bottom));
+                        const frustumH = toMeters(frustumHUnits);
+                        if (Number.isFinite(frustumH) && frustumH > 0) metersPerPixel = frustumH / viewportH;
+                    } else {
+                        const fovRad = THREE.MathUtils.degToRad(Number(camera?.fov) || 0);
+                        if (!Number.isFinite(fovRad) || fovRad <= 1e-6 || fovRad >= (Math.PI - 1e-6)) return atlasMaxZoom;
+                        const depth = (Number.isFinite(cameraHeightForLod) && cameraHeightForLod > 0)
+                            ? cameraHeightForLod
+                            : null;
+                        if (depth === null || !Number.isFinite(depth) || depth <= 0) return atlasMaxZoom;
+                        metersPerPixel = (2 * depth * Math.tan(fovRad / 2)) / viewportH;
+                    }
+                    if (!Number.isFinite(metersPerPixel) || metersPerPixel <= 0) return atlasMaxZoom;
+                    const z = Math.ceil(Math.log2(WORLD / (256 * metersPerPixel)));
+                    if (!Number.isFinite(z)) return atlasMaxZoom;
+                    return Math.max(atlasMinZoom, Math.min(atlasMaxZoom, (z + zoomBias) | 0));
+                };
+
+                const targetZoom = pickViewportZoom();
+                const maxZ = targetZoom;
+                const minZ = Math.max(atlasMinZoom, maxZ - maxViewportLevels + 1);
+                const distScale = (() => {
+                    const s = Number.isFinite(lodCfg?.distanceScale) ? Number(lodCfg.distanceScale) : Number(cfg.mapDrapeAutoBandsDistanceScale);
+                    return (Number.isFinite(s) && s > 0) ? s : 1;
+                })();
+                const zoomBias = Number.isFinite(lodCfg?.zoomBias) ? Number(lodCfg.zoomBias) : (Number.isFinite(cfg.mapDrapeAutoBandsZoomBias) ? Number(cfg.mapDrapeAutoBandsZoomBias) : 0);
+
+                const maxRange = Math.max(1, Number(radiusMeters) || 1);
+                const zoomAt = (d) => {
+                    const dd = Math.max(0, (Number.isFinite(d) ? d : 0) / distScale);
+                    const d3 = (Number.isFinite(cameraHeightForLod) && cameraHeightForLod > 0) ? Math.hypot(dd, cameraHeightForLod) : dd;
+                    return clampZoom(getZoomLevelByDistance(d3) + zoomBias, minZ, maxZ);
+                };
+
+                const out = [];
+                for (let z = minZ; z <= maxZ; z++) {
+                    if (zoomAt(0) < z) continue;
+                    if (maxRange <= 0) continue;
+                    if (zoomAt(maxRange) >= z) {
+                        out.push({ maxDist: maxRange, zoom: z });
+                        continue;
+                    }
+                    let lo = 0;
+                    let hi = maxRange;
+                    for (let i = 0; i < 24; i++) {
+                        const mid = (lo + hi) * 0.5;
+                        if (zoomAt(mid) >= z) lo = mid;
+                        else hi = mid;
+                    }
+                    if (lo > 0) out.push({ maxDist: lo, zoom: z });
+                }
+                if (out.length) return out;
+                return [{ maxDist: maxRange, zoom: maxZ }];
+            }
+            if (!useAutoBands && bandsCfg) return bandsCfg;
+
+            const maxRange = Math.max(0, Number(radiusMeters) || 0);
+            const minZ = atlasMinZoom;
+            const maxZ = atlasMaxZoom;
+            const distScale = (() => {
+                const s = Number(cfg.mapDrapeAutoBandsDistanceScale);
+                return (Number.isFinite(s) && s > 0) ? s : 1;
+            })();
+            const zoomBias = Number.isFinite(cfg.mapDrapeAutoBandsZoomBias) ? Number(cfg.mapDrapeAutoBandsZoomBias) : 0;
+            const zoomAt = (d) => {
+                const dd = (Number.isFinite(d) ? d : 0) / distScale;
+                return clampZoom(getZoomLevelByDistance(dd) + zoomBias, minZ, maxZ);
+            };
+            const out = [];
+            for (let z = minZ; z <= maxZ; z++) {
+                if (zoomAt(0) < z) continue;
+                if (maxRange <= 0) continue;
+                if (zoomAt(maxRange) >= z) {
+                    out.push({ maxDist: maxRange, zoom: z });
+                    continue;
+                }
+                let lo = 0;
+                let hi = maxRange;
+                for (let i = 0; i < 24; i++) {
+                    const mid = (lo + hi) * 0.5;
+                    if (zoomAt(mid) >= z) lo = mid;
+                    else hi = mid;
+                }
+                if (lo > 0) out.push({ maxDist: lo, zoom: z });
+            }
+            if (out.length) return out;
+            const z0 = atlasMaxZoom;
+            const z1 = Math.max(atlasMinZoom, z0 - 1);
+            const z2 = Math.max(atlasMinZoom, z0 - 2);
+            const z3 = Math.max(atlasMinZoom, z0 - 3);
+            return [
+                { maxDist: 80, zoom: z0 },
+                { maxDist: 250, zoom: z1 },
+                { maxDist: 600, zoom: z2 },
+                { maxDist: radiusMeters, zoom: z3 }
+            ];
+        })();
 
         // Derive a tilt-aware zoom set:
-        // - near-vertical: fewer levels (e.g. 18..17)
-        // - shallow: more levels (e.g. 18..15)
-        let topZoom = 15;
+        // - near-vertical: fewer levels (e.g. top..top-1)
+        // - shallow: more levels (e.g. top..min)
+        let topZoom = atlasMinZoom;
         for (const b of bands) {
             const z = Number(b?.zoom);
             if (Number.isFinite(z)) topZoom = Math.max(topZoom, z | 0);
         }
-        topZoom = Math.max(15, Math.min(atlasMaxZoom, topZoom | 0));
+        topZoom = Math.max(atlasMinZoom, Math.min(atlasMaxZoom, topZoom | 0));
 
         // Camera-height based cap: prevents requesting extreme zooms when the view can't resolve them anyway.
         // This is critical for near-vertical views: otherwise the pitch gate can collapse to [18,17] and
         // accidentally force huge high-zoom grids.
         const topZoomByHeight = (() => {
-            if (cfg.mapDrapeAutoMaxZoomEnabled === false) return null;
-            if (!Number.isFinite(cameraHeight) || cameraHeight <= 0) return null;
+            if (autoMaxZoomEnabled === false) return null;
+            const heightForCap = useViewportMode ? cameraHeightForLod : cameraHeight;
+            if (!Number.isFinite(heightForCap) || heightForCap <= 0) return null;
 
             const renderer = this.terrain?.renderer;
             const cssH = Number(renderer?.domElement?.clientHeight) || 0;
@@ -985,7 +1278,7 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
             } else {
                 const fovRad = THREE.MathUtils.degToRad(Number(camera?.fov) || 0);
                 if (Number.isFinite(fovRad) && fovRad > 1e-6 && fovRad < (Math.PI - 1e-6)) {
-                    metersPerPixel = (2 * cameraHeight * Math.tan(fovRad / 2)) / viewportH;
+                    metersPerPixel = (2 * heightForCap * Math.tan(fovRad / 2)) / viewportH;
                 }
             }
             if (!Number.isFinite(metersPerPixel) || metersPerPixel <= 0) return null;
@@ -993,56 +1286,94 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
             // Tile m/px at zoom z is WORLD / (256 * 2^z). Choose z where tile m/px ~= view m/px.
             const z = Math.ceil(Math.log2(WORLD / (256 * metersPerPixel)));
             if (!Number.isFinite(z)) return null;
-            return Math.max(15, Math.min(atlasMaxZoom, z | 0));
+            return Math.max(atlasMinZoom, Math.min(atlasMaxZoom, z | 0));
         })();
         if (topZoomByHeight !== null) topZoom = Math.min(topZoom, topZoomByHeight);
 
-        const rangeByZoom = new Map([[15, 0], [16, 0], [17, 0], [18, 0]]);
+        let activeMinZoom = useViewportMode ? Math.max(atlasMinZoom, topZoom - maxViewportLevels + 1) : atlasMinZoom;
+
+        const rangeByZoom = new Map();
+        for (let z = atlasMinZoom; z <= atlasMaxZoom; z++) rangeByZoom.set(z, 0);
 
         for (const b of bands) {
             const z0 = Number(b?.zoom);
             const d0 = Number(b?.maxDist);
             if (!Number.isFinite(z0) || !Number.isFinite(d0)) continue;
             const d = Math.max(0, d0);
-            const z = Math.max(15, Math.min(topZoom, z0 | 0));
+            const z = Math.max(activeMinZoom, Math.min(topZoom, z0 | 0));
             rangeByZoom.set(z, Math.max(rangeByZoom.get(z) || 0, d));
+        }
+        for (let z = atlasMinZoom; z <= atlasMaxZoom; z++) {
+            if (z < activeMinZoom || z > topZoom) rangeByZoom.set(z, 0);
         }
 
         const maxNewLoadsPerTick = Math.max(0, this._opts.mapDrapeAtlasMaxNewLoadsPerTick | 0);
         const wantsMipmaps = this._opts.mapDrapeAtlasMipmaps === true;
         const outerRing = Math.max(0, this._opts.mapDrapeAtlasOuterRingTiles | 0);
+        const renderer = this.terrain?.renderer;
+        const maxRTSize = (() => {
+            const maxRT = Number(renderer?.capabilities?.maxRenderTargetSize);
+            const maxTex = Number(renderer?.capabilities?.maxTextureSize);
+            let max = Infinity;
+            if (Number.isFinite(maxRT) && maxRT > 0) max = Math.min(max, maxRT);
+            if (Number.isFinite(maxTex) && maxTex > 0) max = Math.min(max, maxTex);
+            if (!Number.isFinite(max) || max <= 0) max = 4096;
+            return max;
+        })();
+        const maxGridForCell = (cellSizePx) => {
+            const cell = Math.max(1, cellSizePx | 0);
+            const raw = Math.max(1, Math.floor(maxRTSize / cell));
+            if (!wantsMipmaps) return raw;
+            let p = 1;
+            while ((p << 1) <= raw) p <<= 1;
+            return Math.max(1, p);
+        };
 
         const stats = { selected: 0, candidates: 0, frustumPassed: 0, nearPassed: 0, totalConsidered: 0 };
         const frustum = new THREE.Frustum();
         const projScreen = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
         frustum.setFromProjectionMatrix(projScreen);
 
-        const baseZoomCfg = Number.isFinite(cfg.mapDrapeBaseZoom) ? (cfg.mapDrapeBaseZoom | 0) : 15;
+        const baseZoomCfg = Number.isFinite(cfg.mapDrapeBaseZoom) ? (cfg.mapDrapeBaseZoom | 0) : atlasMinZoom;
         const viewportFillZoomCfg = Number.isFinite(cfg.mapDrapeViewportFillZoom) ? (cfg.mapDrapeViewportFillZoom | 0) : topZoom;
-        const viewportFillZoom = Math.max(15, Math.min(topZoom, viewportFillZoomCfg));
-        const viewportFillBaseZoom = Math.max(15, Math.min(viewportFillZoom, baseZoomCfg));
-        const viewportPadTiles = Number.isFinite(cfg.mapDrapeViewportPadTiles)
-            ? Math.max(0, cfg.mapDrapeViewportPadTiles | 0)
-            : (Number.isFinite(this.terrain?.tileConfig?.mapDrapeViewportPadTiles)
-                ? Math.max(0, this.terrain.tileConfig.mapDrapeViewportPadTiles | 0)
-                : 1);
+        let viewportFillZoom = Math.max(atlasMinZoom, Math.min(topZoom, viewportFillZoomCfg));
+        let viewportFillBaseZoom = Math.max(atlasMinZoom, Math.min(viewportFillZoom, baseZoomCfg));
+        const viewportPadTiles = Number.isFinite(lodCfg?.viewportPadTiles)
+            ? Math.max(0, lodCfg.viewportPadTiles | 0)
+            : (Number.isFinite(cfg.mapDrapeViewportPadTiles)
+                ? Math.max(0, cfg.mapDrapeViewportPadTiles | 0)
+                : (Number.isFinite(this.terrain?.tileConfig?.mapDrapeViewportPadTiles)
+                    ? Math.max(0, this.terrain.tileConfig.mapDrapeViewportPadTiles | 0)
+                    : 1));
 
         const viewportMercBounds = (() => {
             if (!viewportFullUpdateRequested) return null;
             if (!proj?.centerMercator) return null;
+            const _groundHitAtNdc = (nx, ny) => {
+                if (!camera) return null;
+                ndcV2.set(nx, ny);
+                raycaster.setFromCamera(ndcV2, camera);
 
-            const planeBelowGroundCfg = Number.isFinite(cfg.mapDrapeViewportPlaneBelowGroundMeters)
-                ? Math.max(0, Number(cfg.mapDrapeViewportPlaneBelowGroundMeters))
-                : null;
-            const planeBelowGroundMeters = planeBelowGroundCfg !== null
-                ? planeBelowGroundCfg
-                : (Number.isFinite(cameraHeight) && cameraHeight > 0 ? Math.min(500, Math.max(0, cameraHeight * 0.25)) : 0);
-            const planeBelowGround = toUnits(planeBelowGroundMeters);
+                if (terrainGroup) {
+                    const hits = raycaster.intersectObject(terrainGroup, true);
+                    if (hits?.length) {
+                        for (const h of hits) {
+                            const obj = h?.object;
+                            if (obj?.userData?.isEditPatch) continue;
+                            if (h?.point?.isVector3) return h.point.clone();
+                        }
+                    }
+                }
 
-            // Intersect screen-corner rays with a horizontal plane near (but slightly below) the camera ground height
-            // to estimate the ground footprint of the view. Lowering the plane makes the bound more conservative
-            // on sloped terrain (prevents frustum-edge holes).
-            const planeY = (Number.isFinite(groundHeightAtCam) ? Number(groundHeightAtCam) : 0) - planeBelowGround;
+                const o = raycaster.ray.origin;
+                const d = raycaster.ray.direction;
+                const dy = d.y;
+                if (!Number.isFinite(dy) || Math.abs(dy) < 1e-9) return null;
+                const t = (planeY - o.y) / dy;
+                if (!Number.isFinite(t) || t <= 0) return null;
+                return o.clone().addScaledVector(d, t);
+            };
+
             const mercPts = [];
             const ndc = [
                 [-1, -1],
@@ -1052,24 +1383,29 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
             ];
 
             for (const [nx, ny] of ndc) {
-                const pNear = new THREE.Vector3(nx, ny, -1).unproject(camera);
-                const pFar = new THREE.Vector3(nx, ny, 1).unproject(camera);
-                const dir = pFar.sub(pNear);
-                const lenSq = dir.lengthSq();
-                if (lenSq < 1e-12) continue;
-                dir.multiplyScalar(1 / Math.sqrt(lenSq));
-                const dy = dir.y;
-                if (!Number.isFinite(dy) || Math.abs(dy) < 1e-8) continue;
-                const t = (planeY - pNear.y) / dy;
-                if (!Number.isFinite(t) || t <= 0) continue;
-                const p = pNear.add(dir.multiplyScalar(t));
+                const p = _groundHitAtNdc(nx, ny);
+                if (!p) continue;
                 const mx = proj.centerMercator.x + toMeters(p.x);
                 const my = proj.centerMercator.y - toMeters(p.z);
                 if (!Number.isFinite(mx) || !Number.isFinite(my)) continue;
                 mercPts.push({ x: mx, y: my });
             }
 
-            if (mercPts.length < 2) return null;
+            const fallbackBounds = () => {
+                const r = Math.max(1, Number(radiusMeters) || 1);
+                return {
+                    minX: camMerc.x - r,
+                    minY: camMerc.y - r,
+                    maxX: camMerc.x + r,
+                    maxY: camMerc.y + r,
+                    planeY,
+                    planeBelowGround,
+                    mercPts: mercPts.length,
+                    maxRangeMeters: r
+                };
+            };
+
+            if (mercPts.length < 3) return fallbackBounds();
             let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
             for (const p of mercPts) {
                 if (p.x < minX) minX = p.x;
@@ -1077,7 +1413,27 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
                 if (p.x > maxX) maxX = p.x;
                 if (p.y > maxY) maxY = p.y;
             }
-            if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) return null;
+            if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) return fallbackBounds();
+
+            if (useViewportMode) {
+                const r = Math.max(1, Number(radiusMeters) || 1);
+                const minXR = camMerc.x - r;
+                const maxXR = camMerc.x + r;
+                const minYR = camMerc.y - r;
+                const maxYR = camMerc.y + r;
+                minX = Math.max(minX, minXR);
+                maxX = Math.min(maxX, maxXR);
+                minY = Math.max(minY, minYR);
+                maxY = Math.min(maxY, maxYR);
+                if (maxX < minX || maxY < minY) {
+                    minX = minXR;
+                    maxX = maxXR;
+                    minY = minYR;
+                    maxY = maxYR;
+                }
+                return { minX, minY, maxX, maxY, planeY, planeBelowGround, mercPts: mercPts.length, maxRangeMeters: r };
+            }
+
             return { minX, minY, maxX, maxY, planeY, planeBelowGround, mercPts: mercPts.length };
         })();
 
@@ -1115,20 +1471,135 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
 
         const viewportTileBoundsByZoom = new Map();
         if (viewportMercBounds) {
-            const zs = new Set([viewportFillZoom, viewportFillBaseZoom]);
-            for (const z of zs) {
+            for (let z = atlasMinZoom; z <= topZoom; z++) {
                 const b = _viewportTileBoundsAtZoom(z);
                 if (b) viewportTileBoundsByZoom.set(z, b);
             }
         }
+        if (useViewportMode && viewportTileBoundsByZoom.size) {
+            const maxTilesPerZoom = Number.isFinite(lodCfg?.maxTilesPerZoom)
+                ? Math.max(4, lodCfg.maxTilesPerZoom | 0)
+                : null;
+            const tileCount = (b) => (b ? (b.xMax - b.xMin + 1) * (b.yMax - b.yMin + 1) : 0);
+            if (maxTilesPerZoom !== null) {
+                for (const z of Array.from(viewportTileBoundsByZoom.keys())) {
+                    const b0 = viewportTileBoundsByZoom.get(z);
+                    if (!b0 || tileCount(b0) <= maxTilesPerZoom) continue;
+                    const center = this._mercatorToTileXY(camMerc.x, camMerc.y, z);
+                    if (!center) continue;
+                    const size = Math.max(1, Math.floor(Math.sqrt(maxTilesPerZoom)));
+                    const half = Math.floor(size / 2);
+                    const n = 1 << z;
+                    const clamp = (v) => Math.max(0, Math.min(n - 1, v | 0));
+
+                    let xMin = clamp(center.x - half);
+                    let xMax = clamp(center.x + half);
+                    let yMin = clamp(center.y - half);
+                    let yMax = clamp(center.y + half);
+
+                    if ((xMax - xMin + 1) < size) {
+                        const need = size - (xMax - xMin + 1);
+                        xMin = clamp(xMin - Math.ceil(need / 2));
+                        xMax = clamp(xMin + size - 1);
+                    }
+                    if ((yMax - yMin + 1) < size) {
+                        const need = size - (yMax - yMin + 1);
+                        yMin = clamp(yMin - Math.ceil(need / 2));
+                        yMax = clamp(yMin + size - 1);
+                    }
+                    viewportTileBoundsByZoom.set(z, { xMin, yMin, xMax, yMax });
+                }
+            }
+            activeMinZoom = Math.max(atlasMinZoom, topZoom - maxViewportLevels + 1);
+
+            // Prune bounds outside the active range.
+            for (const z of Array.from(viewportTileBoundsByZoom.keys())) {
+                if (z < activeMinZoom || z > topZoom) viewportTileBoundsByZoom.delete(z);
+            }
+        }
+        if (useViewportMode && viewportTileBoundsByZoom.size) {
+            const maxRange = Math.max(1, Number(radiusMeters) || 1);
+            for (const z of viewportTileBoundsByZoom.keys()) {
+                const cur = rangeByZoom.get(z) || 0;
+                if (cur <= 0) rangeByZoom.set(z, maxRange);
+            }
+        }
+        if (useViewportMode && viewportTileBoundsByZoom.size && Number.isFinite(lodCfg?.maxViewportTiles)) {
+            const maxViewportTiles = Math.max(1, lodCfg.maxViewportTiles | 0);
+            const tileCount = (b) => (b ? (b.xMax - b.xMin + 1) * (b.yMax - b.yMin + 1) : 0);
+            for (const [z, b0] of viewportTileBoundsByZoom.entries()) {
+                if (!b0 || tileCount(b0) <= maxViewportTiles) continue;
+                const center = this._mercatorToTileXY(camMerc.x, camMerc.y, z);
+                if (!center) continue;
+                const size = Math.max(1, Math.floor(Math.sqrt(maxViewportTiles)));
+                const half = Math.floor(size / 2);
+                const n = 1 << z;
+                const clamp = (v) => Math.max(0, Math.min(n - 1, v | 0));
+
+                let xMin = clamp(center.x - half);
+                let xMax = clamp(center.x + half);
+                let yMin = clamp(center.y - half);
+                let yMax = clamp(center.y + half);
+
+                if ((xMax - xMin + 1) < size) {
+                    const need = size - (xMax - xMin + 1);
+                    xMin = clamp(xMin - Math.ceil(need / 2));
+                    xMax = clamp(xMin + size - 1);
+                }
+                if ((yMax - yMin + 1) < size) {
+                    const need = size - (yMax - yMin + 1);
+                    yMin = clamp(yMin - Math.ceil(need / 2));
+                    yMax = clamp(yMin + size - 1);
+                }
+                viewportTileBoundsByZoom.set(z, { xMin, yMin, xMax, yMax });
+            }
+        }
         const viewportFullUpdate = viewportFullUpdateRequested && viewportTileBoundsByZoom.size > 0;
 
-        // Prioritize highest zoom first so higher-zoom tiles are requested before lower ones.
+        const minTileZoom = useViewportMode ? activeMinZoom : atlasMinZoom;
+        const maxTileZoom = useViewportMode ? topZoom : atlasMaxZoom;
         const tiles = this._tiles();
-        for (const z of [18, 17, 16, 15]) {
+
+        // Drop stale zoom levels so shader slots always match the current active set.
+        for (const z of Array.from(atlas.byZoom.keys())) {
+            if (z < minTileZoom || z > maxTileZoom) {
+                const stOld = atlas.byZoom.get(z);
+                if (stOld) {
+                    if (tiles) for (const key of stOld.activeKeys) tiles.unpin?.(key);
+                    atlas.byZoom.delete(z);
+                    try { stOld.rt?.dispose?.(); } catch {}
+                }
+                continue;
+            }
+            const hasBounds = viewportFullUpdate && viewportTileBoundsByZoom.has(z);
+            const rz = rangeByZoom.get(z) || 0;
+            if (!hasBounds && rz <= 0) {
+                const stOld = atlas.byZoom.get(z);
+                if (stOld) {
+                    if (tiles) for (const key of stOld.activeKeys) tiles.unpin?.(key);
+                    atlas.byZoom.delete(z);
+                    try { stOld.rt?.dispose?.(); } catch {}
+                }
+            }
+        }
+
+        const innerRangeByZoom = new Map();
+        if (useViewportMode) {
+            let prev = 0;
+            for (let z = topZoom; z >= activeMinZoom; z--) {
+                innerRangeByZoom.set(z, prev);
+                const r = rangeByZoom.get(z) || 0;
+                if (r > prev) prev = r;
+            }
+        }
+
+        // Prioritize highest zoom first so higher-zoom tiles are requested before lower ones.
+        for (let z = maxTileZoom; z >= minTileZoom; z--) {
             const baseRange = rangeByZoom.get(z) || 0;
             const viewportTileBounds = viewportTileBoundsByZoom.get(z) || null;
             const useViewportBounds = viewportFullUpdate && viewportTileBounds !== null;
+            const cellSizeGuess = resolveCellSize(z, atlas.pendingCellSizeByZoom.get(z) || atlas.byZoom.get(z)?.cellSize || (this.terrain?.tileConfig?.tileSize ?? 256));
+            const maxGridSize = maxGridForCell(cellSizeGuess);
 
             // Shallow views: exaggerate the configured radial ranges a bit so the frustum doesn't visibly
             // run out of atlas coverage. Cap the scale to avoid exploding requests.
@@ -1141,8 +1612,17 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
                 return Math.min(maxScale, inv);
             })();
             let range = baseRange * rangeScale;
-            if (useViewportBounds) range = Infinity;
+            if (useViewportBounds) range = useViewportMode ? range : Infinity;
             else if (viewportFullUpdate) range = 0;
+            const n = 1 << z;
+            const tileSizeMeters = WORLD / n;
+            if (!useViewportBounds) {
+                const maxSpan = Math.max(1, Math.floor((maxGridSize - 1) / 2));
+                const maxRangeByGrid = Math.max(0, (maxSpan - 1) * tileSizeMeters);
+                const nearCap = Number.isFinite(radiusMeters) ? radiusMeters : range;
+                const maxRange = Math.min(nearCap, maxRangeByGrid > 0 ? maxRangeByGrid : nearCap);
+                if (Number.isFinite(maxRange) && range > maxRange) range = maxRange;
+            }
 
             if (range <= 0) {
                 const stOld = atlas.byZoom.get(z);
@@ -1154,11 +1634,8 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
                 continue;
             }
 
-            const n = 1 << z;
             const center = this._mercatorToTileXY(camMerc.x, camMerc.y, z);
             if (!center) continue;
-
-            const tileSizeMeters = WORLD / n;
             const span = useViewportBounds ? 0 : Math.max(1, Math.ceil(range / tileSizeMeters) + 1);
 
             const candidates = [];
@@ -1175,6 +1652,10 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
                     const boundsMerc = proj.tileToMercatorBounds(tileX, tileY, z);
                     const rectDist = distancePointToRect(camMerc.x, camMerc.y, boundsMerc);
                     if (rectDist > range) continue;
+                    if (useViewportMode && !useViewportBounds) {
+                        const inner = innerRangeByZoom.get(z) || 0;
+                        if (inner > 0 && rectDist <= inner) continue;
+                    }
                     stats.nearPassed++;
 
                     if (!this._isTileVisibleInFrustum(frustum, boundsMerc, camera.position.y)) continue;
@@ -1268,7 +1749,8 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
 
             const w = (maxTX - minTX + 1);
             const h = (maxTY - minTY + 1);
-            const gridSize = wantsMipmaps ? nextPow2(Math.max(w, h)) : Math.max(w, h);
+            let gridSize = wantsMipmaps ? nextPow2(Math.max(w, h)) : Math.max(w, h);
+            if (gridSize > maxGridSize) gridSize = maxGridSize;
 
             const clampOrigin = (o) => Math.max(0, Math.min(n - gridSize, o));
             let originX = clampOrigin(center.x - Math.floor(gridSize / 2));
@@ -1278,37 +1760,55 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
             if (originY > minTY) originY = clampOrigin(minTY);
             if ((originY + gridSize - 1) < maxTY) originY = clampOrigin(maxTY - gridSize + 1);
 
-            const desiredCellSize = atlas.pendingCellSizeByZoom.get(z) || atlas.byZoom.get(z)?.cellSize || (this.terrain?.tileConfig?.tileSize ?? 256);
+            const desiredCellSize = resolveCellSize(z, atlas.pendingCellSizeByZoom.get(z) || atlas.byZoom.get(z)?.cellSize || (this.terrain?.tileConfig?.tileSize ?? 256));
             const st = this._ensureZoomState(z, { originX, originY, gridSize }, desiredCellSize);
             if (atlas.pendingCellSizeByZoom.has(z) && st?.cellSize === desiredCellSize) atlas.pendingCellSizeByZoom.delete(z);
 
-            const nextKeys = new Set();
+            const desiredKeys = new Set();
             const cellInfos = [];
-            const cellCount = gridSize * gridSize;
-            stats.totalConsidered += cellCount;
-            for (let idx = 0; idx < cellCount; idx++) {
-                const ix = idx % gridSize;
-                const iy = Math.floor(idx / gridSize);
-                const tileX = originX + ix;
-                const tileY = originY + iy;
-                const key = this._tileKey(z, tileX, tileY);
-                nextKeys.add(key);
-
-                const boundsMerc = proj.tileToMercatorBounds(tileX, tileY, z);
-                const rectDist = distancePointToRect(camMerc.x, camMerc.y, boundsMerc);
-                cellInfos.push({ idx, key, tileX, tileY, rectDist, boundsMerc });
+            for (const c of candidates) {
+                const ix = c.tileX - originX;
+                const iy = c.tileY - originY;
+                if (ix < 0 || iy < 0 || ix >= gridSize || iy >= gridSize) continue;
+                const idx = iy * gridSize + ix;
+                desiredKeys.add(c.key);
+                cellInfos.push({ idx, key: c.key, tileX: c.tileX, tileY: c.tileY, rectDist: c.rectDist });
             }
+            stats.totalConsidered += cellInfos.length;
 
             for (const key of st.activeKeys) {
-                if (tiles && !nextKeys.has(key)) tiles.unpin?.(key);
+                if (tiles && !desiredKeys.has(key)) tiles.unpin?.(key);
             }
-            for (const key of nextKeys) {
+            for (const key of desiredKeys) {
                 if (tiles && !st.activeKeys.has(key)) tiles.pin?.(key);
             }
-            st.activeKeys = nextKeys;
+            st.activeKeys = desiredKeys;
+
+            if (skipTileLoad) {
+                continue;
+            }
 
             for (const key of st.textures.keys()) {
-                if (!nextKeys.has(key)) st.textures.delete(key);
+                if (desiredKeys.has(key)) continue;
+                st.textures.delete(key);
+
+                const parts = String(key).split('-');
+                const tileX = Number(parts[1]);
+                const tileY = Number(parts[2]);
+                if (!Number.isFinite(tileX) || !Number.isFinite(tileY)) continue;
+                const ix = tileX - st.grid.originX;
+                const iy = tileY - st.grid.originY;
+                if (ix < 0 || iy < 0 || ix >= st.grid.gridSize || iy >= st.grid.gridSize) continue;
+                const idx = iy * st.grid.gridSize + ix;
+                const mat = st.meshes[idx]?.material;
+                if (!mat) continue;
+                if (mat.map !== null || mat.opacity !== 0 || mat.transparent !== true) {
+                    mat.map = null;
+                    mat.opacity = 0;
+                    mat.transparent = true;
+                    mat.needsUpdate = true;
+                    st.dirty = true;
+                }
             }
 
             cellInfos.sort((a, b) => a.rectDist - b.rectDist);
@@ -1338,7 +1838,7 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
                     ?.getTileTexture(c.tileX, c.tileY, z)
                     .then((tex) => {
                         const actual = this._getCellSizeFromTexture(tex);
-                        if (actual && atlas.pendingCellSizeByZoom.get(z) !== actual) {
+                        if (!hasCellSizeOverride(z) && actual && atlas.pendingCellSizeByZoom.get(z) !== actual) {
                             const currentCell = atlas.byZoom.get(z)?.cellSize || (this.terrain?.tileConfig?.tileSize ?? 256);
                             if (actual !== currentCell) atlas.pendingCellSizeByZoom.set(z, actual);
                         }
@@ -1373,12 +1873,13 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
             }
         }
 
-        this._setUniforms(true);
+        this._setUniforms(!skipTileLoad);
 
         // Debug: help verify which zoom is actually available at the camera position (detect fallback chain).
         const loadedAtCam = {};
         const active = {};
-        for (const z of [18, 17, 16, 15]) {
+        const debugZooms = this._getAtlasZoomSlots(4);
+        for (const z of debugZooms) {
             const st = atlas.byZoom.get(z);
             if (!st) {
                 loadedAtCam[z] = false;
@@ -1395,11 +1896,15 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
         }
 
         this._debugLog({
-            mode: 'atlas',
+            mode: useViewportMode ? 'atlas-viewport' : 'atlas',
+            lodMode,
             pitchDeg: Number(pitchDeg.toFixed(2)),
             topZoom,
             topZoomByHeight,
+            atlasMinZoom,
+            activeMinZoom,
             atlasMaxZoom,
+            cameraHeightForLod: Number.isFinite(cameraHeightForLod) ? Number(cameraHeightForLod.toFixed(2)) : null,
             viewportFullUpdateRequested,
             viewportFullUpdate,
             viewportFullMinDownTiltDeg: Number(viewportFullMinDownTiltDeg.toFixed(2)),
@@ -1429,10 +1934,16 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
         const centerY = Number(this.terrain?.proj?.centerMercator?.y ?? 0);
         const metersPerUnit = Number(this.terrain?.proj?.metersPerUnit ?? 1) || 1;
 
-        const z15 = this._state?.byZoom?.get?.(15) ?? null;
-        const z16 = this._state?.byZoom?.get?.(16) ?? null;
-        const z17 = this._state?.byZoom?.get?.(17) ?? null;
-        const z18 = this._state?.byZoom?.get?.(18) ?? null;
+        const zoomSlots = enabled ? this._getAtlasZoomSlots(4) : [];
+        const slotZoom = (i) => (Number.isFinite(zoomSlots[i]) ? zoomSlots[i] : null);
+        const z0 = slotZoom(0);
+        const z1 = slotZoom(1);
+        const z2 = slotZoom(2);
+        const z3 = slotZoom(3);
+        const st0 = (z0 !== null) ? this._state?.byZoom?.get?.(z0) ?? null : null;
+        const st1 = (z1 !== null) ? this._state?.byZoom?.get?.(z1) ?? null : null;
+        const st2 = (z2 !== null) ? this._state?.byZoom?.get?.(z2) ?? null : null;
+        const st3 = (z3 !== null) ? this._state?.byZoom?.get?.(z3) ?? null : null;
 
         const smoothness = Math.max(0, Math.min(1, Number(this._opts.mapDrapeAtlasSmoothness) || 0));
         const smoothRadiusPx = Math.max(0, Number(this._opts.mapDrapeAtlasSmoothRadiusPx) || 0);
@@ -1460,10 +1971,10 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
             return new THREE.Vector2(x - centerX, y - centerY);
         };
 
-        const o15 = enabled ? originLocalVec(z15, 15) : new THREE.Vector2(0, 0);
-        const o16 = enabled ? originLocalVec(z16, 16) : new THREE.Vector2(0, 0);
-        const o17 = enabled ? originLocalVec(z17, 17) : new THREE.Vector2(0, 0);
-        const o18 = enabled ? originLocalVec(z18, 18) : new THREE.Vector2(0, 0);
+        const o0 = enabled ? originLocalVec(st0, z0) : new THREE.Vector2(0, 0);
+        const o1 = enabled ? originLocalVec(st1, z1) : new THREE.Vector2(0, 0);
+        const o2 = enabled ? originLocalVec(st2, z2) : new THREE.Vector2(0, 0);
+        const o3 = enabled ? originLocalVec(st3, z3) : new THREE.Vector2(0, 0);
 
         for (const t of tileMap.values()) {
             const m = t?.mesh;
@@ -1476,25 +1987,30 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
                 if (u.uMapAtlasCenterMercator?.value?.set) u.uMapAtlasCenterMercator.value.set(centerX, centerY);
                 if (u.uSceneMetersPerUnit) u.uSceneMetersPerUnit.value = metersPerUnit;
 
-                if (u.uMapAtlasTex15) u.uMapAtlasTex15.value = enabled ? (z15?.rt?.texture ?? null) : null;
-                if (u.uMapAtlasTex16) u.uMapAtlasTex16.value = enabled ? (z16?.rt?.texture ?? null) : null;
-                if (u.uMapAtlasTex17) u.uMapAtlasTex17.value = enabled ? (z17?.rt?.texture ?? null) : null;
-                if (u.uMapAtlasTex18) u.uMapAtlasTex18.value = enabled ? (z18?.rt?.texture ?? null) : null;
+                if (u.uMapAtlasTex0) u.uMapAtlasTex0.value = enabled ? (st0?.rt?.texture ?? null) : null;
+                if (u.uMapAtlasTex1) u.uMapAtlasTex1.value = enabled ? (st1?.rt?.texture ?? null) : null;
+                if (u.uMapAtlasTex2) u.uMapAtlasTex2.value = enabled ? (st2?.rt?.texture ?? null) : null;
+                if (u.uMapAtlasTex3) u.uMapAtlasTex3.value = enabled ? (st3?.rt?.texture ?? null) : null;
 
-                if (u.uMapAtlasGrid15?.value?.copy) u.uMapAtlasGrid15.value.copy(gridVec(z15));
-                if (u.uMapAtlasGrid16?.value?.copy) u.uMapAtlasGrid16.value.copy(gridVec(z16));
-                if (u.uMapAtlasGrid17?.value?.copy) u.uMapAtlasGrid17.value.copy(gridVec(z17));
-                if (u.uMapAtlasGrid18?.value?.copy) u.uMapAtlasGrid18.value.copy(gridVec(z18));
+                if (u.uMapAtlasGrid0?.value?.copy) u.uMapAtlasGrid0.value.copy(gridVec(st0));
+                if (u.uMapAtlasGrid1?.value?.copy) u.uMapAtlasGrid1.value.copy(gridVec(st1));
+                if (u.uMapAtlasGrid2?.value?.copy) u.uMapAtlasGrid2.value.copy(gridVec(st2));
+                if (u.uMapAtlasGrid3?.value?.copy) u.uMapAtlasGrid3.value.copy(gridVec(st3));
 
-                if (u.uMapAtlasOriginLocal15?.value?.copy) u.uMapAtlasOriginLocal15.value.copy(o15);
-                if (u.uMapAtlasOriginLocal16?.value?.copy) u.uMapAtlasOriginLocal16.value.copy(o16);
-                if (u.uMapAtlasOriginLocal17?.value?.copy) u.uMapAtlasOriginLocal17.value.copy(o17);
-                if (u.uMapAtlasOriginLocal18?.value?.copy) u.uMapAtlasOriginLocal18.value.copy(o18);
+                if (u.uMapAtlasOriginLocal0?.value?.copy) u.uMapAtlasOriginLocal0.value.copy(o0);
+                if (u.uMapAtlasOriginLocal1?.value?.copy) u.uMapAtlasOriginLocal1.value.copy(o1);
+                if (u.uMapAtlasOriginLocal2?.value?.copy) u.uMapAtlasOriginLocal2.value.copy(o2);
+                if (u.uMapAtlasOriginLocal3?.value?.copy) u.uMapAtlasOriginLocal3.value.copy(o3);
 
-                if (u.uMapAtlasInvCell15) u.uMapAtlasInvCell15.value = enabled ? invCell(z15) : 0;
-                if (u.uMapAtlasInvCell16) u.uMapAtlasInvCell16.value = enabled ? invCell(z16) : 0;
-                if (u.uMapAtlasInvCell17) u.uMapAtlasInvCell17.value = enabled ? invCell(z17) : 0;
-                if (u.uMapAtlasInvCell18) u.uMapAtlasInvCell18.value = enabled ? invCell(z18) : 0;
+                if (u.uMapAtlasInvCell0) u.uMapAtlasInvCell0.value = enabled ? invCell(st0) : 0;
+                if (u.uMapAtlasInvCell1) u.uMapAtlasInvCell1.value = enabled ? invCell(st1) : 0;
+                if (u.uMapAtlasInvCell2) u.uMapAtlasInvCell2.value = enabled ? invCell(st2) : 0;
+                if (u.uMapAtlasInvCell3) u.uMapAtlasInvCell3.value = enabled ? invCell(st3) : 0;
+
+                if (u.uMapAtlasZoom0) u.uMapAtlasZoom0.value = enabled && z0 !== null ? z0 : 0;
+                if (u.uMapAtlasZoom1) u.uMapAtlasZoom1.value = enabled && z1 !== null ? z1 : 0;
+                if (u.uMapAtlasZoom2) u.uMapAtlasZoom2.value = enabled && z2 !== null ? z2 : 0;
+                if (u.uMapAtlasZoom3) u.uMapAtlasZoom3.value = enabled && z3 !== null ? z3 : 0;
 
                 if (u.uMapAtlasSmoothness) u.uMapAtlasSmoothness.value = enabled ? smoothness : 0;
                 if (u.uMapAtlasSmoothRadiusPx) u.uMapAtlasSmoothRadiusPx.value = enabled ? smoothRadiusPx : 0;
@@ -1528,10 +2044,6 @@ vec4 sampleMapAtlas(in sampler2D tex, in vec4 grid, in vec2 originLocal, in floa
             const carryLoads = st?.loads instanceof Map ? st.loads : new Map();
             const carryActiveKeys = st?.activeKeys instanceof Set ? st.activeKeys : new Set();
 
-            if (st?.activeKeys?.size) {
-                const tiles = this._tiles();
-                if (tiles) for (const key of st.activeKeys) tiles.unpin?.(key);
-            }
             try { st?.rt?.dispose?.(); } catch {}
 
             const sizePx = Math.max(1, grid.gridSize) * cellSize;

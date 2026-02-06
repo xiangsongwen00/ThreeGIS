@@ -22,7 +22,7 @@ export class CameraManager {
         this.config = {
             fov: 60,
             near: 0.1,
-            far: 600000,
+            far: 10000000,
             maxPolarAngle: Math.PI / 2 - 0.05,
             dampingFactor: 0.05,
             // 操作速度可按需调整，无缩放限制

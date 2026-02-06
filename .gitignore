@@ -1,7 +1,8 @@
 # 依赖
 node_modules/
 
-
+.vs/
+.git/
 # 数据文件夹
 data/
 

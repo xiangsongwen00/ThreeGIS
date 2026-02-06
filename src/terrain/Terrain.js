@@ -6,6 +6,7 @@ import { TerrainTile } from './TerrainTile.js';
 import { TerrainEditor } from './TerrainEditor.js';
 import { MultipleTerrainEditorEditor } from './MultipleTerrainEditorEditor.js';
 import { TerrainMapAtlas } from './TerrainMapAtlas.js';
+import { MapDrapeLodVisualizer } from './MapDrapeLodVisualizer.js';
 
 /**
  * Terrain renderer and editor integration.
@@ -23,6 +24,10 @@ export class Terrain {
     mapAtlas = null;
     /** @type {ImageryTiles|null} */
     imageryTilesAtlas = null;
+    /** @type {boolean} */
+    _terrainImageryDisabled = false;
+    /** @type {THREE.Texture|null} */
+    _atlasDummyTexture = null;
 
     // Terrain "switch":
     // - true  => render real elevation from terrain-rgb heightmaps
@@ -229,6 +234,7 @@ export class Terrain {
 
         // Single rendering route: terrain material drape + shader atlas (no overlay).
         this.mapAtlas = new TerrainMapAtlas(this);
+        this.lodVisualizer = new MapDrapeLodVisualizer(this);
 
         // Terrain editing tools
         this.editor = new TerrainEditor(this);
@@ -551,19 +557,25 @@ export class Terrain {
             dynamic: !!options.dynamic
         };
 
-        // Apply satellite imagery (async) to terrain material.
-        // Background imagery is optional (persistent, never evicted).
-        this._applyBackgroundImageryToTerrainMesh(terrainMesh, tileX, tileY, tileZ);
+        const imageryEnabled = this.config?.terrainImageryEnabled !== false;
+        const patchOnly = !imageryEnabled && this.config?.mapDrapeShaderPatchEnabled === true && this.config?.mapDrapeSkipTileLoad !== true;
+        if (imageryEnabled) {
+            // Apply satellite imagery (async) to terrain material.
+            // Background imagery is optional (persistent, never evicted).
+            this._applyBackgroundImageryToTerrainMesh(terrainMesh, tileX, tileY, tileZ);
 
-        // Terrain material imagery:
-        // - Base drape is static (always applied once per tile)
-        // - Near-range high-zoom detail is applied by `TerrainMapAtlas.update()` (15-18).
-        const baseZoom = Number.isFinite(this.config?.mapDrapeBaseZoom) ? this.config.mapDrapeBaseZoom : tileZ;
-        void this._applySatelliteToTerrainMesh(terrainMesh, tileX, tileY, tileZ, {
-            mapZoom: baseZoom,
-            maxZoomDiff: this.tileConfig?.mapMaxZoomDiff ?? 2,
-            force: true
-        });
+            // Terrain material imagery:
+            // - Base drape is static (always applied once per tile)
+            // - Near-range high-zoom detail is applied by `TerrainMapAtlas.update()` (15-18).
+            const baseZoom = Number.isFinite(this.config?.mapDrapeBaseZoom) ? this.config.mapDrapeBaseZoom : tileZ;
+            void this._applySatelliteToTerrainMesh(terrainMesh, tileX, tileY, tileZ, {
+                mapZoom: baseZoom,
+                maxZoomDiff: this.tileConfig?.mapMaxZoomDiff ?? 2,
+                force: true
+            });
+        } else if (patchOnly) {
+            this._applyAtlasDummyToMesh(terrainMesh);
+        }
 
         // 
         this.terrainMesh = terrainMesh;
@@ -729,6 +741,8 @@ export class Terrain {
 
         this.mapAtlas?.clear?.();
 
+        const imageryEnabled = this.config?.terrainImageryEnabled !== false;
+        const patchOnly = !imageryEnabled && this.config?.mapDrapeShaderPatchEnabled === true && this.config?.mapDrapeSkipTileLoad !== true;
         const baseZoom = Number.isFinite(this.config?.mapDrapeBaseZoom) ? this.config.mapDrapeBaseZoom : this.tileConfig.zoom;
         for (const t of this.tileMap?.values?.() ?? []) {
             const mesh = t?.mesh;
@@ -748,13 +762,18 @@ export class Terrain {
                 mesh.userData.backgroundMapCacheKey = null;
             }
             mesh.userData.backgroundMapZoomApplied = null;
-            try { this._applyBackgroundImageryToTerrainMesh(mesh, t.tileX, t.tileY, t.tileZ); } catch { /* ignore */ }
 
-            void this._applySatelliteToTerrainMesh(mesh, t.tileX, t.tileY, t.tileZ, {
-                mapZoom: baseZoom,
-                maxZoomDiff: this.tileConfig?.mapMaxZoomDiff ?? 2,
-                force: true
-            });
+            if (imageryEnabled) {
+                try { this._applyBackgroundImageryToTerrainMesh(mesh, t.tileX, t.tileY, t.tileZ); } catch { /* ignore */ }
+
+                void this._applySatelliteToTerrainMesh(mesh, t.tileX, t.tileY, t.tileZ, {
+                    mapZoom: baseZoom,
+                    maxZoomDiff: this.tileConfig?.mapMaxZoomDiff ?? 2,
+                    force: true
+                });
+            } else if (patchOnly) {
+                this._applyAtlasDummyToMesh(mesh);
+            }
         }
 
         if (camera) this.updateImagery(camera);
@@ -764,6 +783,19 @@ export class Terrain {
         try {
             if (!mesh?.isMesh) return;
             if (mesh.userData?.isEditPatch) return;
+            if (this.config?.terrainImageryEnabled === false) {
+                const mat = mesh.material;
+                if (mat?.map) {
+                    mat.map = null;
+                    mat.needsUpdate = true;
+                }
+                if (mesh.userData?.mapCacheKey) {
+                    try { this.imageryTiles?.unpin?.(mesh.userData.mapCacheKey); } catch { /* ignore */ }
+                    mesh.userData.mapCacheKey = null;
+                }
+                mesh.userData.mapZoomApplied = null;
+                return;
+            }
 
             this.imageryTiles?.setRenderer?.(this.renderer);
             this.imageryTiles?.setOptions?.({
@@ -843,6 +875,19 @@ export class Terrain {
         try {
             if (!mesh?.isMesh) return;
             if (mesh.userData?.isEditPatch) return;
+            if (this.config?.terrainImageryEnabled === false) {
+                if (mesh.userData?.backgroundMapCacheKey) {
+                    try { this.imageryTiles?.unpin?.(mesh.userData.backgroundMapCacheKey); } catch { /* ignore */ }
+                    mesh.userData.backgroundMapCacheKey = null;
+                }
+                mesh.userData.backgroundMapZoomApplied = null;
+                const mat = mesh.material;
+                if (mat?.map) {
+                    mat.map = null;
+                    mat.needsUpdate = true;
+                }
+                return;
+            }
 
             const enabled = this.config?.backgroundMapEnabled ?? true;
             if (!enabled) return;
@@ -909,6 +954,19 @@ export class Terrain {
      */
     updateImagery(camera) {
         if (!camera?.position) return;
+        const imageryEnabled = this.config?.terrainImageryEnabled !== false;
+        const patchOnly = !imageryEnabled && this.config?.mapDrapeShaderPatchEnabled === true && this.config?.mapDrapeSkipTileLoad !== true;
+        if (!imageryEnabled) {
+            if (!this._terrainImageryDisabled) {
+                this._terrainImageryDisabled = true;
+                this._clearTerrainImagery({ keepAtlas: patchOnly });
+            }
+            if (patchOnly) this._ensureAtlasPatchMaterials();
+            this.mapAtlas?.update(camera);
+            this.lodVisualizer?.update(camera);
+            return;
+        }
+        this._terrainImageryDisabled = false;
         this.imageryTiles?.setRenderer?.(this.renderer);
         this.imageryTiles?.setOptions?.({
             tileUrl: this.tileConfig?.mapTileUrl,
@@ -924,6 +982,67 @@ export class Terrain {
         });
 
         this.mapAtlas?.update(camera);
+        this.lodVisualizer?.update(camera);
+    }
+
+    _clearTerrainImagery({ keepAtlas = false } = {}) {
+        for (const t of this.tileMap?.values?.() ?? []) {
+            const mesh = t?.mesh;
+            if (!mesh?.isMesh) continue;
+            const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+            for (const mat of mats) {
+                if (mat?.map) {
+                    mat.map = null;
+                    mat.needsUpdate = true;
+                }
+            }
+            if (mesh.userData?.mapCacheKey) {
+                try { this.imageryTiles?.unpin?.(mesh.userData.mapCacheKey); } catch { /* ignore */ }
+                mesh.userData.mapCacheKey = null;
+            }
+            if (mesh.userData?.backgroundMapCacheKey) {
+                try { this.imageryTiles?.unpin?.(mesh.userData.backgroundMapCacheKey); } catch { /* ignore */ }
+                mesh.userData.backgroundMapCacheKey = null;
+            }
+            mesh.userData.mapZoomApplied = null;
+            mesh.userData.backgroundMapZoomApplied = null;
+        }
+        if (!keepAtlas) this.mapAtlas?.disableOnAllMaterials?.();
+    }
+
+    _getAtlasDummyTexture() {
+        if (this._atlasDummyTexture) return this._atlasDummyTexture;
+        const data = new Uint8Array([255, 255, 255, 255]);
+        const tex = new THREE.DataTexture(data, 1, 1);
+        tex.needsUpdate = true;
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.wrapS = THREE.ClampToEdgeWrapping;
+        tex.wrapT = THREE.ClampToEdgeWrapping;
+        tex.minFilter = THREE.LinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        tex.generateMipmaps = false;
+        this._atlasDummyTexture = tex;
+        return tex;
+    }
+
+    _applyAtlasDummyToMesh(mesh) {
+        if (!mesh?.isMesh) return;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        const dummy = this._getAtlasDummyTexture();
+        for (const mat of mats) {
+            if (!mat?.isMaterial) continue;
+            if (mat.map !== dummy) {
+                mat.map = dummy;
+                mat.needsUpdate = true;
+            }
+            this.mapAtlas?.installOnMaterial?.(mat);
+        }
+    }
+
+    _ensureAtlasPatchMaterials() {
+        for (const t of this.tileMap?.values?.() ?? []) {
+            this._applyAtlasDummyToMesh(t?.mesh);
+        }
     }
 
     _getViewportHeightPx() {
